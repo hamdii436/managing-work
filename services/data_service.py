@@ -1,14 +1,12 @@
 """Data service for business data management."""
 
 import logging
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
-from sqlalchemy.orm import Session
-
-from database.db_manager import get_session
+from database.db_manager import get_db_session
+from database.business_repository import BusinessRepository
 from database.models import BusinessModel
-from database.repository import BaseRepository
-from models.business import Business
+from models.business import Business, Location
 
 logger = logging.getLogger(__name__)
 
@@ -16,189 +14,307 @@ logger = logging.getLogger(__name__)
 class DataService:
     """Service for managing business data."""
 
-    def __init__(self, db_session: Optional[Session] = None) -> None:
-        """Initialize data service.
+    def __init__(self) -> None:
+        """Initialize data service."""
+        self.logger = logging.getLogger(__name__)
 
+    def save_business(self, business: Business) -> bool:
+        """Save a business to database.
+        
         Args:
-            db_session: Database session (creates new if not provided)
-        """
-        self.db_session = db_session or get_session()
-        self.repository = BaseRepository(self.db_session, BusinessModel)
-
-    def save_business(self, business: Business) -> Business:
-        """Save business to database.
-
-        Args:
-            business: Business object to save
-
+            business: Business to save
+            
         Returns:
-            Saved business object
+            True if successful
         """
         try:
-            db_business = self._business_to_model(business)
-            return self.repository.add(db_business)
+            session = get_db_session()
+            try:
+                repo = BusinessRepository(session)
+                
+                # Check if business already exists
+                existing = repo.get_by_url(business.url) if business.url else None
+                
+                if existing:
+                    # Update existing
+                    existing.name = business.name
+                    existing.city = business.city
+                    existing.district = business.district
+                    existing.category = business.category
+                    existing.phone = business.phone
+                    existing.website = business.website
+                    existing.email = business.email
+                    existing.rating = business.rating
+                    existing.review_count = business.review_count
+                    existing.description = business.description
+                    
+                    if business.location:
+                        existing.latitude = business.location.latitude
+                        existing.longitude = business.location.longitude
+                        existing.address = business.location.address
+                    
+                    repo.update(existing)
+                else:
+                    # Create new
+                    model = BusinessModel(
+                        url=business.url or "",
+                        name=business.name,
+                        city=business.city,
+                        district=business.district,
+                        category=business.category,
+                        phone=business.phone,
+                        website=business.website,
+                        email=business.email,
+                        rating=business.rating,
+                        review_count=business.review_count,
+                        description=business.description,
+                        latitude=business.location.latitude if business.location else None,
+                        longitude=business.location.longitude if business.location else None,
+                        address=business.location.address if business.location else None,
+                    )
+                    repo.create(model)
+                
+                logger.info(f"Saved business: {business.name}")
+                return True
+            finally:
+                session.close()
         except Exception as e:
             logger.error(f"Failed to save business: {e}")
-            raise
+            return False
 
-    def save_businesses(self, businesses: List[Business]) -> int:
+    def save_businesses(self, businesses: List[Business]) -> tuple[int, int]:
         """Save multiple businesses to database.
-
+        
         Args:
-            businesses: List of Business objects
-
+            businesses: List of businesses to save
+            
         Returns:
-            Number of businesses saved
+            Tuple of (saved_count, failed_count)
         """
-        saved_count = 0
+        saved = 0
+        failed = 0
+        
         for business in businesses:
-            try:
-                self.save_business(business)
-                saved_count += 1
-            except Exception as e:
-                logger.warning(f"Failed to save business {business.name}: {e}")
-        return saved_count
+            if self.save_business(business):
+                saved += 1
+            else:
+                failed += 1
+        
+        logger.info(f"Saved {saved} businesses, {failed} failed")
+        return saved, failed
 
-    def get_business(self, business_id: str) -> Optional[Business]:
+    def get_business(self, business_id: int) -> Optional[Business]:
         """Get business by ID.
-
+        
         Args:
             business_id: Business ID
-
+            
         Returns:
-            Business object or None
+            Business or None
         """
         try:
-            db_business = self.repository.get_by_id(business_id)
-            return self._model_to_business(db_business) if db_business else None
+            session = get_db_session()
+            try:
+                repo = BusinessRepository(session)
+                model = repo.get_by_id(business_id)
+                if model:
+                    return self._model_to_business(model)
+                return None
+            finally:
+                session.close()
         except Exception as e:
             logger.error(f"Failed to get business: {e}")
-            raise
+            return None
 
     def get_all_businesses(self, skip: int = 0, limit: int = 100) -> List[Business]:
         """Get all businesses with pagination.
-
+        
         Args:
-            skip: Number of records to skip
-            limit: Maximum records to return
-
-        Returns:
-            List of Business objects
-        """
-        try:
-            db_businesses = self.repository.get_all(skip, limit)
-            return [self._model_to_business(b) for b in db_businesses]
-        except Exception as e:
-            logger.error(f"Failed to get businesses: {e}")
-            raise
-
-    def search_businesses(
-        self,
-        category: Optional[str] = None,
-        min_rating: Optional[float] = None,
-        city: Optional[str] = None,
-        skip: int = 0,
-        limit: int = 100,
-    ) -> List[Business]:
-        """Search businesses with filters.
-
-        Args:
-            category: Filter by category
-            min_rating: Filter by minimum rating
-            city: Filter by city
-            skip: Number of records to skip
-            limit: Maximum records to return
-
-        Returns:
-            List of matching Business objects
-        """
-        try:
-            query = self.db_session.query(BusinessModel)
-            if category:
-                query = query.filter(BusinessModel.category == category)
-            if min_rating is not None:
-                query = query.filter(BusinessModel.rating >= min_rating)
-            if city:
-                query = query.filter(BusinessModel.address.ilike(f"%{city}%"))
+            skip: Number to skip
+            limit: Max results
             
-            results = query.offset(skip).limit(limit).all()
-            return [self._model_to_business(b) for b in results]
-        except Exception as e:
-            logger.error(f"Failed to search businesses: {e}")
-            raise
-
-    def delete_business(self, business_id: str) -> bool:
-        """Delete business by ID.
-
-        Args:
-            business_id: Business ID
-
         Returns:
-            True if deleted, False otherwise
+            List of businesses
         """
         try:
-            return self.repository.delete(business_id)
+            session = get_db_session()
+            try:
+                repo = BusinessRepository(session)
+                models = repo.get_all(skip, limit)
+                return [self._model_to_business(m) for m in models]
+            finally:
+                session.close()
         except Exception as e:
-            logger.error(f"Failed to delete business: {e}")
-            raise
+            logger.error(f"Failed to get all businesses: {e}")
+            return []
 
-    def get_total_count(self) -> int:
-        """Get total number of businesses.
+    def search_by_city(self, city: str, skip: int = 0, limit: int = 100) -> List[Business]:
+        """Search businesses by city.
+        
+        Args:
+            city: City name
+            skip: Number to skip
+            limit: Max results
+            
+        Returns:
+            List of businesses
+        """
+        try:
+            session = get_db_session()
+            try:
+                repo = BusinessRepository(session)
+                models = repo.search_by_city(city, skip, limit)
+                return [self._model_to_business(m) for m in models]
+            finally:
+                session.close()
+        except Exception as e:
+            logger.error(f"Failed to search by city: {e}")
+            return []
 
+    def search_by_criteria(self, city: Optional[str] = None, category: Optional[str] = None,
+                          min_rating: Optional[float] = None, max_rating: Optional[float] = None,
+                          skip: int = 0, limit: int = 100) -> List[Business]:
+        """Search businesses by multiple criteria.
+        
+        Args:
+            city: City name (optional)
+            category: Category (optional)
+            min_rating: Minimum rating (optional)
+            max_rating: Maximum rating (optional)
+            skip: Number to skip
+            limit: Max results
+            
+        Returns:
+            List of businesses
+        """
+        try:
+            session = get_db_session()
+            try:
+                repo = BusinessRepository(session)
+                models = repo.search_by_criteria(city, category, min_rating, max_rating, skip, limit)
+                return [self._model_to_business(m) for m in models]
+            finally:
+                session.close()
+        except Exception as e:
+            logger.error(f"Failed to search by criteria: {e}")
+            return []
+
+    def count_total(self) -> int:
+        """Get total count of businesses.
+        
         Returns:
             Total count
         """
         try:
-            return self.repository.count()
+            session = get_db_session()
+            try:
+                repo = BusinessRepository(session)
+                return repo.count()
+            finally:
+                session.close()
         except Exception as e:
-            logger.error(f"Failed to get count: {e}")
-            raise
+            logger.error(f"Failed to count businesses: {e}")
+            return 0
 
-    def _business_to_model(self, business: Business) -> BusinessModel:
-        """Convert Business object to SQLAlchemy model."""
-        return BusinessModel(
-            id=business.id,
-            name=business.name,
-            url=business.url,
-            address=business.address,
-            phone=business.phone,
-            website=business.website,
-            rating=business.rating,
-            review_count=business.review_count,
-            category=business.category,
-            latitude=business.location.latitude,
-            longitude=business.location.longitude,
-            description=business.description,
-            source=business.source,
-            is_verified=business.is_verified,
-            is_duplicate=business.is_duplicate,
-            search_query=business.search_query,
-            created_at=business.created_at,
-            updated_at=business.updated_at,
-        )
+    def delete_business(self, business_id: int) -> bool:
+        """Delete a business.
+        
+        Args:
+            business_id: Business ID
+            
+        Returns:
+            True if successful
+        """
+        try:
+            session = get_db_session()
+            try:
+                repo = BusinessRepository(session)
+                return repo.delete_by_id(business_id)
+            finally:
+                session.close()
+        except Exception as e:
+            logger.error(f"Failed to delete business: {e}")
+            return False
 
-    def _model_to_business(self, db_business: BusinessModel) -> Business:
-        """Convert SQLAlchemy model to Business object."""
+    def delete_by_city(self, city: str) -> bool:
+        """Delete all businesses in a city.
+        
+        Args:
+            city: City name
+            
+        Returns:
+            True if successful
+        """
+        try:
+            session = get_db_session()
+            try:
+                repo = BusinessRepository(session)
+                return repo.delete_by_city(city)
+            finally:
+                session.close()
+        except Exception as e:
+            logger.error(f"Failed to delete businesses by city: {e}")
+            return False
+
+    def get_statistics(self) -> Dict[str, Any]:
+        """Get database statistics.
+        
+        Returns:
+            Statistics dictionary
+        """
+        try:
+            session = get_db_session()
+            try:
+                repo = BusinessRepository(session)
+                all_businesses = repo.get_all(0, 100000)
+                
+                total = len(all_businesses)
+                rated = len([b for b in all_businesses if b.rating])
+                with_website = len([b for b in all_businesses if b.website])
+                with_phone = len([b for b in all_businesses if b.phone])
+                avg_rating = sum(b.rating for b in all_businesses if b.rating) / rated if rated > 0 else 0
+                
+                return {
+                    'total_businesses': total,
+                    'with_rating': rated,
+                    'with_website': with_website,
+                    'with_phone': with_phone,
+                    'average_rating': avg_rating,
+                }
+            finally:
+                session.close()
+        except Exception as e:
+            logger.error(f"Failed to get statistics: {e}")
+            return {}
+
+    def _model_to_business(self, model: BusinessModel) -> Business:
+        """Convert database model to business object.
+        
+        Args:
+            model: Business model
+            
+        Returns:
+            Business object
+        """
+        location = None
+        if model.latitude and model.longitude:
+            location = Location(
+                latitude=model.latitude,
+                longitude=model.longitude,
+                address=model.address,
+            )
+        
         return Business(
-            id=db_business.id,
-            name=db_business.name,
-            url=db_business.url,
-            address=db_business.address,
-            phone=db_business.phone,
-            website=db_business.website,
-            rating=db_business.rating,
-            review_count=db_business.review_count,
-            category=db_business.category,
-            description=db_business.description,
-            source=db_business.source,
-            is_verified=db_business.is_verified,
-            is_duplicate=db_business.is_duplicate,
-            search_query=db_business.search_query,
-            created_at=db_business.created_at,
-            updated_at=db_business.updated_at,
+            name=model.name,
+            city=model.city,
+            district=model.district,
+            category=model.category,
+            phone=model.phone,
+            website=model.website,
+            email=model.email,
+            rating=model.rating,
+            review_count=model.review_count,
+            url=model.url,
+            description=model.description,
+            location=location,
         )
-
-    def close(self) -> None:
-        """Close database session."""
-        if self.db_session:
-            self.db_session.close()
