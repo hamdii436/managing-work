@@ -1,10 +1,12 @@
 """Database manager and connection pool."""
 
 import logging
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from sqlalchemy import create_engine, event, Engine
+from sqlalchemy import create_engine, event, Engine, text, inspect
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import sessionmaker, Session
 
 from config.settings import get_settings
@@ -26,9 +28,13 @@ class DatabaseManager:
         self.db_path = db_path or settings.database_path
         self.engine: Optional[Engine] = None
         self.SessionLocal: Optional[sessionmaker] = None
+        self._initialized = False
 
     def initialize(self) -> None:
         """Initialize database connection and create tables."""
+        if self._initialized:
+            return
+            
         try:
             # Create database directory if it doesn't exist
             db_file = Path(self.db_path)
@@ -36,7 +42,7 @@ class DatabaseManager:
 
             # Create SQLite engine
             self.engine = create_engine(
-                f"sqlite:///{self.db_path}",
+                f"sqlite:///{db_file.absolute()}",
                 echo=False,
                 pool_size=10,
                 pool_recycle=3600,
@@ -55,6 +61,7 @@ class DatabaseManager:
 
             # Create all tables
             Base.metadata.create_all(bind=self.engine)
+            self._initialized = True
             logger.info(f"Database initialized at {self.db_path}")
 
         except Exception as e:
@@ -74,20 +81,66 @@ class DatabaseManager:
             raise RuntimeError("Database not initialized. Call initialize() first.")
         return self.SessionLocal()
 
+    def verify_connection(self) -> tuple[bool, str]:
+        """Verify database connection is working.
+        
+        Returns:
+            Tuple of (success, message)
+        """
+        try:
+            if self.engine is None:
+                return False, "Database engine not initialized"
+            
+            with self.engine.connect() as connection:
+                connection.execute(text("SELECT 1"))
+            logger.info("Database connection verified")
+            return True, "Database connection successful"
+        except Exception as e:
+            error_msg = f"Database connection failed: {str(e)}"
+            logger.error(error_msg)
+            return False, error_msg
+
+    def get_database_info(self) -> dict:
+        """Get database information.
+        
+        Returns:
+            Dictionary with database info
+        """
+        try:
+            if self.engine is None:
+                return {'error': 'Database not initialized'}
+            
+            inspector = inspect(self.engine)
+            tables = inspector.get_table_names()
+            
+            return {
+                'path': str(self.db_path),
+                'tables': tables,
+                'table_count': len(tables),
+                'is_connected': True,
+            }
+        except Exception as e:
+            logger.error(f"Failed to get database info: {e}")
+            return {
+                'error': str(e),
+                'is_connected': False,
+            }
+
     def close(self) -> None:
         """Close database connection."""
         if self.engine:
             self.engine.dispose()
+            self._initialized = False
             logger.info("Database connection closed")
 
-    def backup(self, backup_path: Optional[str] = None) -> bool:
+    def backup(self, backup_path: Optional[str] = None) -> tuple[bool, str]:
         """Backup database to file.
 
         Args:
-            backup_path: Path to backup file
+            backup_path: Path to backup directory
 
         Returns:
-            True if backup successful, False otherwise
+            Tuple of (success, message)
         """
         try:
             from shutil import copy2
@@ -98,11 +151,13 @@ class DatabaseManager:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             backup_file = backup_dir / f"database_backup_{timestamp}.db"
             copy2(self.db_path, str(backup_file))
-            logger.info(f"Database backed up to {backup_file}")
-            return True
+            msg = f"Database backed up to {backup_file}"
+            logger.info(msg)
+            return True, msg
         except Exception as e:
-            logger.error(f"Failed to backup database: {e}")
-            return False
+            error_msg = f"Failed to backup database: {e}"
+            logger.error(error_msg)
+            return False, error_msg
 
     def reset(self) -> None:
         """Reset database (drop all tables and recreate)."""
@@ -135,5 +190,17 @@ def get_session() -> Session:
     return get_db_manager().get_session()
 
 
-# For backwards compatibility with datetime import
-from datetime import datetime
+def verify_database() -> tuple[bool, str]:
+    """Verify database connection."""
+    return get_db_manager().verify_connection()
+
+
+def get_db_info() -> dict:
+    """Get database information."""
+    return get_db_manager().get_database_info()
+
+
+def backup_database(backup_path: Optional[str] = None) -> tuple[bool, str]:
+    """Create database backup."""
+    return get_db_manager().backup(backup_path)
+
