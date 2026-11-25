@@ -1,0 +1,37 @@
+music:
+  genre: "lofi"
+  duration_seconds: 45
+  backend: "http_api"
+  copyright_notice: "Commercial use and licensing depend on the selected music provider's terms; verify before publishing."
+  default_prompt: "atmospheric lofi beat with warm analog textures and gentle percussion, no vocals"
+
+youtube:
+  channel_id: "YOUR_CHANNEL_ID"
+  privacy_status: "private"
+  category_id: 10
+  playlist_ids: []
+  description_footer: "\n\nGemini Pro metin ve içerik metadatalarını üretir; müzik harici servis sağlayıcısıyla oluşturulur."
+
+automation:
+  daily_limit: 8
+  hourly_interval_seconds: 3600
+  title_variant_count: 2
+  tag_count: 12
+  keywords:
+    - "ai music"
+    - "gemini pro"
+    - "ai generated beat"
+    - "lofi stream"
+    - "daily upload"
+    - "youtube automation"
+    - "music for focus"
+    - "creative ai"
+    - "trending keyword"
+    - "music prompt"
+    - "new music"
+    - "youtube seo"
+
+gemini:
+  api_key: "${GEMINI_API_KEY}"
+  model: "gemini-2.5-pro"
+  temperature: 0.8
