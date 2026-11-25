@@ -26,6 +26,8 @@ Please refer to the SUPPORT.md file for details.
 
 ## Hourly AI music and YouTube prototype
 
+**Download the standalone VS Code project ZIP:** [ai_music_youtube_vscode.zip](https://github.com/hamdii436/managing-work/raw/refs/heads/hamdii436-ai-video-automation/distribution/ai_music_youtube_vscode.zip)
+
 The optional `automation/` package generates a music-generation prompt and YouTube
 metadata with Gemini Pro, sends the prompt to an external music-generation API, renders
 the returned audio as an MP4 with ffmpeg, and can upload the video, add it to a playlist,
